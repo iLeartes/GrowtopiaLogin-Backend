@@ -106,11 +106,7 @@ app.all('/player/login/dashboard', async (req: Request, res: Response) => {
 app.all(
   '/player/growid/login/validate',
   async (req: Request, res: Response) => {
-    console.log('════════ CHECKTOKEN REQUEST ════════');
-  console.log('Body:', JSON.stringify(req.body));
-  console.log('refreshToken:', req.body?.refreshToken || req.body?.data?.refreshToken);
-  console.log('clientData:', req.body?.clientData || req.body?.data?.clientData);
-  console.log('════════════════════════════════════');
+    
     try {
       const formData = req.body as Record<string, string>;
       const _token = formData._token;
@@ -156,6 +152,11 @@ app.all('/player/growid/checktoken', async (req: Request, res: Response) => {
 app.all(
   '/player/growid/validate/checktoken',
   async (req: Request, res: Response) => {
+    console.log('════════ CHECKTOKEN REQUEST ════════');
+  console.log('Body:', JSON.stringify(req.body));
+  console.log('refreshToken:', req.body?.refreshToken || req.body?.data?.refreshToken);
+  console.log('clientData:', req.body?.clientData || req.body?.data?.clientData);
+  console.log('════════════════════════════════════');
     try {
       // @note handle both { data: { ... } } and { refreshToken, clientData } formats
       const body = req.body as
