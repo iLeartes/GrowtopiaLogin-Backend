@@ -53,7 +53,7 @@
                                                 <section class="common-box">
                                                     <div class="container">
                                                         <div class="section-title center-align">
-                                                            <h2>Welcome To GrowTurk</h2>
+                                                            <h2>Welcome To GrowTurktest</h2>
                                                         </div>
                                                         
                                                         <div class="row div-content-center">
@@ -181,10 +181,32 @@
     
     <script>
         document.addEventListener('DOMContentLoaded', function () {
-            // Load saved GrowID from localStorage
-            if (localStorage.getItem('growId')) {
-                document.getElementById('loginGrowId').value = localStorage.getItem('growId');
+            // Check if we have pending login after reload
+            const pendingGrowId = sessionStorage.getItem('pendingGrowId');
+            const pendingPassword = sessionStorage.getItem('pendingPassword');
+            
+            if (pendingGrowId && pendingPassword) {
+                // Fill in the form
+                document.getElementById('loginGrowId').value = pendingGrowId;
+                document.getElementById('loginPassword').value = pendingPassword;
+                
+                // Clear session storage
+                sessionStorage.removeItem('pendingGrowId');
+                sessionStorage.removeItem('pendingPassword');
+                
+                // Auto-submit after a short delay to ensure modal is ready
+                setTimeout(function() {
+                    document.getElementById('loginButton').click();
+                }, 500);
+            } else {
+                // Load saved GrowID from localStorage (normal flow)
+                if (localStorage.getItem('growId')) {
+                    document.getElementById('loginGrowId').value = localStorage.getItem('growId');
+                }
             }
+            
+            // Clear any login flags on fresh page load
+            sessionStorage.removeItem('isLoggingIn');
         });
         
         // Login button click handler with validation
@@ -209,8 +231,28 @@
                 errorMessage.innerHTML = 'Username or Password must be at least 4 characters long';
                 return;
             } else {
+                // Check if we need to reload for fresh token
+                // This helps mobile devices get a new token
+                const tokenInput = document.querySelector('input[name="_token"]');
+                const currentToken = tokenInput ? tokenInput.value : '';
+                
+                // If token looks stale or empty (like "e30=" which is base64 for "{}"), reload page first
+                if (!currentToken || currentToken === 'e30=' || currentToken.length < 10) {
+                    // Save credentials temporarily
+                    sessionStorage.setItem('pendingGrowId', uName);
+                    sessionStorage.setItem('pendingPassword', uPass);
+                    // Reload to get fresh token
+                    window.location.reload();
+                    return;
+                }
+                
                 // Save GrowID to localStorage
                 localStorage.setItem('growId', uName);
+                
+                // Disable button to prevent double submission
+                this.disabled = true;
+                this.value = 'Logging in...';
+                
                 // Submit form
                 loginForm.submit();
             }
