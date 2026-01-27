@@ -53,6 +53,11 @@ app.get('/', (_req: Request, res: Response) => {
  * @param res - express response
  */
 app.all('/player/login/dashboard', async (req: Request, res: Response) => {
+  console.log('════════ DASHBOARD REQUEST ════════');
+  console.log('Body:', JSON.stringify(req.body));
+  console.log('Body Keys:', Object.keys(req.body || {}));
+  console.log('User-Agent:', req.headers['user-agent']);
+  console.log('═══════════════════════════════════');
   const tData: Record<string, string> = {};
 
   // @note handle empty body or missing data
