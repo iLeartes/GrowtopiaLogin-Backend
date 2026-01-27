@@ -153,12 +153,12 @@ app.all(
   '/player/growid/validate/checktoken',
   async (req: Request, res: Response) => {
     console.log('════════ CHECKTOKEN REQUEST ════════');
-  console.log('Body:', JSON.stringify(req.body));
-  console.log('refreshToken:', req.body?.refreshToken || req.body?.data?.refreshToken);
-  console.log('clientData:', req.body?.clientData || req.body?.data?.clientData);
-  console.log('════════════════════════════════════');
+    console.log('Body:', JSON.stringify(req.body));
+    console.log('refreshToken:', req.body?.refreshToken || req.body?.data?.refreshToken);
+    console.log('clientData:', req.body?.clientData || req.body?.data?.clientData);
+    console.log('════════════════════════════════════');
+    
     try {
-      // @note handle both { data: { ... } } and { refreshToken, clientData } formats
       const body = req.body as
         | { data: { refreshToken: string; clientData: string } }
         | { refreshToken: string; clientData: string };
@@ -180,6 +180,22 @@ app.all(
         'utf-8',
       );
 
+      if (decodeRefreshToken.includes('_token=e30=')) {
+        console.log('[FIX] Fixing empty token from clientData');
+        
+        const tData: Record<string, string> = {};
+        const lines = clientData.split('\n');
+        for (const line of lines) {
+          const [key, value] = line.split('|');
+          if (key && value !== undefined) {
+            tData[key] = value;
+          }
+        }
+        
+        const newTokenData = Buffer.from(JSON.stringify(tData)).toString('base64');
+        decodeRefreshToken = decodeRefreshToken.replace('_token=e30=', `_token=${newTokenData}`);
+      }
+
       const token = Buffer.from(
         decodeRefreshToken.replace(
           /(_token=)[^&]*/,
@@ -199,7 +215,6 @@ app.all(
     }
   },
 );
-
 app.listen(PORT, () => {
   console.log(`[SERVER] Running on http://localhost:${PORT}`);
 });
