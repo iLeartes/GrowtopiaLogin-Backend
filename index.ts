@@ -7,15 +7,16 @@ import fs from 'fs';
 const app = express();
 const PORT = 3000;
 
-// @note trust proxy - set to number of proxies in front of app
+// Trust proxy
 app.set('trust proxy', 1);
 
-// @note middleware setup
+// Body parsers (genel)
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
 app.use(cors());
 
-// @note rate limiter - 50 requests per minute
+// Rate limiter
 const limiter = rateLimit({
   windowMs: 60_000,
   max: 50,
@@ -25,169 +26,146 @@ const limiter = rateLimit({
 });
 app.use(limiter);
 
-// @note static files from public folder
+// Static files
 app.use(express.static(path.join(process.cwd(), 'public')));
 
-// @note request logging middleware
-app.use((req: Request, _res: Response, next: NextFunction) => {
+// Request logging middleware
+app.use((req: Request, res: Response, next: NextFunction) => {
   const clientIp =
     (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ||
-    req.headers['x-real-ip'] ||
+    (req.headers['x-real-ip'] as string) ||
     req.socket.remoteAddress ||
     'unknown';
 
-  console.log(
-    `[REQ] ${req.method} ${req.path} → ${clientIp} | ${_res.statusCode}`,
-  );
+  console.log(`[REQ] ${req.method} ${req.path} → ${clientIp}`);
   next();
 });
 
-// @note root endpoint
+// Root
 app.get('/', (_req: Request, res: Response) => {
   res.send('Hello, world!');
 });
 
 /**
- * @note dashboard endpoint - serves login HTML page with client data
- * @param req - express request with optional body data
- * @param res - express response
+ * IMPORTANT:
+ * Growtopia client çoğu zaman dashboard'a JSON değil düz text yollar.
+ * Bu yüzden sadece bu route altında raw text body yakalıyoruz.
+ */
+app.use('/player/login/dashboard', express.text({ type: '*/*' }));
+
+/**
+ * Dashboard endpoint - serves login HTML page with client data
  */
 app.all('/player/login/dashboard', async (req: Request, res: Response) => {
-  const tData: Record<string, string> = {};
+  try {
+    // Mobil bazen body yollamaz (GET olur), o yüzden hem body hem query deniyoruz
+    const rawBody = typeof req.body === 'string' ? req.body : '';
+    const rawQuery = typeof req.query?.data === 'string' ? req.query.data : '';
 
-  // @note handle empty body or missing data
-  const body = req.body;
-  if (body && typeof body === 'object' && Object.keys(body).length > 0) {
-    try {
-      const bodyStr = JSON.stringify(body);
-      const parts = bodyStr.split('"');
+    const clientData = rawBody.length ? rawBody : rawQuery;
 
-      if (parts.length > 1) {
-        const uData = parts[1].split('\n');
-        for (let i = 0; i < uData.length - 1; i++) {
-          const d = uData[i].split('|');
-          if (d.length === 2) {
-            tData[d[0]] = d[1];
-          }
-        }
-      }
-    } catch (why) {
-      console.log(`[ERROR]: ${why}`);
-    }
+    // Debug: mobil/pc farkını gör
+    console.log('[DASHBOARD] method:', req.method, 'content-type:', req.headers['content-type']);
+    console.log('[DASHBOARD] raw length:', clientData.length);
+
+    // _token: clientData'nın base64'ü olmalı
+    const tokenBase64 = Buffer.from(clientData, 'utf-8').toString('base64');
+
+    const templatePath = path.join(process.cwd(), 'template', 'dashboard.html');
+    const templateContent = fs.readFileSync(templatePath, 'utf-8');
+
+    const htmlContent = templateContent.replace('{{ data }}', tokenBase64);
+
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(htmlContent);
+  } catch (why) {
+    console.log(`[ERROR][DASHBOARD]: ${why}`);
+    res.status(500).send('Internal Server Error');
   }
-
-  // @note convert tData object to base64 string
-  const tDataBase64 = Buffer.from(JSON.stringify(tData)).toString('base64');
-
-  // @note read dashboard template and replace placeholder
-  const templatePath = path.join(
-    process.cwd(),
-    'template',
-    'dashboard.html',
-  );
-
-  const templateContent = fs.readFileSync(templatePath, 'utf-8');
-  const htmlContent = templateContent.replace('{{ data }}', tDataBase64);
-
-  res.setHeader('Content-Type', 'text/html');
-  res.send(htmlContent);
 });
 
 /**
- * @note validate login endpoint - validates GrowID credentials
- * @param req - express request with growId, password, _token
- * @param res - express response with token
+ * Validate login endpoint - validates GrowID credentials (senin sisteminde "success" dönüyor)
  */
-app.all(
-  '/player/growid/login/validate',
-  async (req: Request, res: Response) => {
-    try {
-      const formData = req.body as Record<string, string>;
-      const _token = formData._token;
-      const growId = formData.growId;
-      const password = formData.password;
+app.all('/player/growid/login/validate', async (req: Request, res: Response) => {
+  try {
+    const formData = req.body as Record<string, string>;
 
-      const token = Buffer.from(
-        `_token=${_token}&growId=${growId}&password=${password}&reg=0`,
-      ).toString('base64');
+    const _token = formData._token ?? '';
+    const growId = formData.growId ?? '';
+    const password = formData.password ?? '';
 
-      res.setHeader('Content-Type', 'text/html');
-      res.json({
-        status: 'success',
-        message: 'Account Validated.',
-        token,
-        url: '',
-        accountType: 'growtopia',
-      });
-    } catch (error) {
-      console.log(`[ERROR]: ${error}`);
-      res.status(500).json({
-        status: 'error',
-        message: 'Internal Server Error',
-      });
-    }
-  },
-);
+    // Debug
+    console.log('[VALIDATE] growId:', growId, 'tokenLen:', _token.length);
 
-/**
- * @note first checktoken endpoint - redirects using 307 to preserve data
- * @param req - express request with refreshToken and clientData
- * @param res - express response with updated token
- */
-app.all('/player/growid/checktoken', async (req: Request, res: Response) => {
-  return res.redirect(307, '/player/growid/validate/checktoken');
+    const tokenPlain = `_token=${_token}&growId=${growId}&password=${password}&reg=0`;
+    const token = Buffer.from(tokenPlain, 'utf-8').toString('base64');
+
+    res.json({
+      status: 'success',
+      message: 'Account Validated.',
+      token,
+      url: '',
+      accountType: 'growtopia',
+    });
+  } catch (error) {
+    console.log(`[ERROR][VALIDATE]: ${error}`);
+    res.status(500).json({
+      status: 'error',
+      message: 'Internal Server Error',
+    });
+  }
 });
 
 /**
- * @note second checktoken endpoint - validates token and returns updated token
- * @param req - express request with refreshToken and clientData
- * @param res - express response with updated token
+ * Checktoken handler - redirect YOK (mobilde 307 body düşebiliyor)
  */
-app.all(
-  '/player/growid/validate/checktoken',
-  async (req: Request, res: Response) => {
-    try {
-      // @note handle both { data: { ... } } and { refreshToken, clientData } formats
-      const body = req.body as
-        | { data: { refreshToken: string; clientData: string } }
-        | { refreshToken: string; clientData: string };
+const handleCheckToken = (req: Request, res: Response) => {
+  try {
+    // Hem {data:{refreshToken, clientData}} hem düz format destek
+    const body = req.body as any;
 
-      const refreshToken =
-        'data' in body ? body.data?.refreshToken : body.refreshToken;
-      const clientData =
-        'data' in body ? body.data?.clientData : body.clientData;
+    const refreshToken = body?.data?.refreshToken ?? body?.refreshToken;
+    const clientData = body?.data?.clientData ?? body?.clientData;
 
-      if (!refreshToken || !clientData) {
-        res.status(400).json({
-          status: 'error',
-          message: 'Missing refreshToken or clientData',
-        });
-        return;
-      }
+    console.log('[CHECKTOKEN] method:', req.method, 'hasRefresh:', !!refreshToken, 'hasClientData:', !!clientData);
 
-      let decodeRefreshToken = Buffer.from(refreshToken, 'base64').toString(
-        'utf-8',
-      );
-
-      const token = Buffer.from(
-        decodeRefreshToken.replace(
-          /(_token=)[^&]*/,
-          `$1${Buffer.from(clientData).toString('base64')}`,
-        ),
-      ).toString('base64');
-
-      res.send(
-        `{"status":"success","message":"Token is valid.","token":"${token}","url":"","accountType":"growtopia"}`,
-      );
-    } catch (error) {
-      console.log(`[ERROR]: ${error}`);
-      res.status(500).json({
+    if (!refreshToken || !clientData) {
+      return res.status(400).json({
         status: 'error',
-        message: 'Internal Server Error',
+        message: 'Missing refreshToken or clientData',
       });
     }
-  },
-);
+
+    const decoded = Buffer.from(refreshToken, 'base64').toString('utf-8');
+
+    // clientData'yı base64 yapıp _token alanına basıyoruz
+    const replacedPlain = decoded.replace(
+      /(_token=)[^&]*/,
+      `$1${Buffer.from(clientData, 'utf-8').toString('base64')}`,
+    );
+
+    const token = Buffer.from(replacedPlain, 'utf-8').toString('base64');
+
+    return res.json({
+      status: 'success',
+      message: 'Token is valid.',
+      token,
+      url: '',
+      accountType: 'growtopia',
+    });
+  } catch (error) {
+    console.log(`[ERROR][CHECKTOKEN]: ${error}`);
+    return res.status(500).json({
+      status: 'error',
+      message: 'Internal Server Error',
+    });
+  }
+};
+
+// İki endpoint de aynı handler (redirect yok)
+app.all('/player/growid/checktoken', handleCheckToken);
+app.all('/player/growid/validate/checktoken', handleCheckToken);
 
 app.listen(PORT, () => {
   console.log(`[SERVER] Running on http://localhost:${PORT}`);
